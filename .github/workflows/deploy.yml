@@ -1,0 +1,42 @@
+name: CI/CD for Zero2K8s COP
+
+on:
+  push:
+    branches: [ BaseStack ]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v6
+      with:
+        context: ./docker
+        file: ./docker/Dockerfile
+        push: true
+        tags: metanets369/zero2k8s-cop:latest
+
+    - name: Set up Minikube
+      uses: medyagh/setup-minikube@master
+      with:
+        minikube-version: v1.35.0
+        kubernetes-version: v1.32.0
+
+    - name: Deploy to Minikube
+      run: |
+        kubectl apply -f yaml/cop-deployment.yaml
+        kubectl rollout status deployment/zero2k8s-cop
+        minikube service zero2k8s-cop-service --url
