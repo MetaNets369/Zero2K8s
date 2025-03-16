@@ -30,7 +30,7 @@ jobs:
         tags: metanets/zero2k8s-cop:latest
 
     - name: Set up Minikube
-      uses: medyagh/setup-minikube@master
+      uses: medyagh/setup-minikube@latest
       with:
         minikube-version: v1.35.0
         kubernetes-version: v1.32.0
