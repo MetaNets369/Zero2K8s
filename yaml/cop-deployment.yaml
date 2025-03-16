@@ -1,4 +1,3 @@
-yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -26,14 +25,15 @@ spec:
           limits:
             cpu: "0.5"
             memory: "512Mi"
+---
 apiVersion: v1
 kind: Service
 metadata:
   name: zero2k8s-cop-service
 spec:
   selector:
-app: zero2k8s-cop
+    app: zero2k8s-cop  # Properly indented under `spec`
   ports:
-- port: 80
-  targetPort: 8000  # Match container port
+  - port: 80
+    targetPort: 8000  # Match container port
   type: LoadBalancer
