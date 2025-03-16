@@ -1,9 +1,8 @@
+yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: zero2k8s-cop
-  labels:
-    app: zero2k8s-cop
 spec:
   replicas: 1
   selector:
@@ -16,20 +15,25 @@ spec:
     spec:
       containers:
       - name: zero2k8s-cop
-        image: zero2k8s-cop:latest
-        imagePullPolicy: IfNotPresent  # Add this line
+        image: metanets/zero2k8s-cop:latest
+        imagePullPolicy: Always
         ports:
-        - containerPort: 5000
----
+        - containerPort: 8000  # Adjust port based on your COP
+        resources:
+          requests:
+            cpu: "0.2"
+            memory: "256Mi"
+          limits:
+            cpu: "0.5"
+            memory: "512Mi"
 apiVersion: v1
 kind: Service
 metadata:
   name: zero2k8s-cop-service
 spec:
   selector:
-    app: zero2k8s-cop
+app: zero2k8s-cop
   ports:
-    - protocol: TCP
-      port: 80
-      targetPort: 5000
+- port: 80
+  targetPort: 8000  # Match container port
   type: LoadBalancer
