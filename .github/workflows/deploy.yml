@@ -50,3 +50,4 @@ jobs:
 
 
 # Updated with Docker Hub token
+# Optimized for Minikube and Install kubectl Github Actions deployment
