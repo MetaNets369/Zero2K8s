@@ -27,7 +27,7 @@ jobs:
         context: ./docker
         file: ./docker/Dockerfile
         push: true
-        tags: metanets369/zero2k8s-cop:latest
+        tags: metanets/zero2k8s-cop:latest
 
     - name: Set up Minikube
       uses: medyagh/setup-minikube@master
