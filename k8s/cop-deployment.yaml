@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zero2k8s-cop
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: zero2k8s-cop
+  template:
+    metadata:
+      labels:
+        app: zero2k8s-cop
+    spec:
+      containers:
+      - name: zero2k8s-cop
+        image: metanets/zero2k8s-cop:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 5000  # Updated to FastAPI port
+        resources:
+          requests:
+            cpu: "0.2"
+            memory: "256Mi"
+          limits:
+            cpu: "0.5"
+            memory: "512Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zero2k8s-cop-service
+spec:
+  selector:
+    app: zero2k8s-cop
+  ports:
+  - port: 80
+    targetPort: 5000  # Match container port
+  type: LoadBalancer
