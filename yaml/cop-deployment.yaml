@@ -37,3 +37,5 @@ spec:
   - port: 80
     targetPort: 8000  # Match container port
   type: LoadBalancer
+
+  #yaml/cop-service.yaml
