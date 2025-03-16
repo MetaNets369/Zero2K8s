@@ -29,12 +29,18 @@ jobs:
         push: true
         tags: metanets/zero2k8s-cop:latest
 
-    - name: Set up Minikube
-      uses: medyagh/setup-minikube@v0.0.18 # Adjust version based on Marketplace listing
-      with:
-        minikube-version: 'v1.35.0'
-        kubernetes-version: 'v1.32.0'
-        driver: 'docker'
+    - name: Install Minikube
+      run: |
+        curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
+        sudo install minikube-linux-amd64 /usr/local/bin/minikube
+    - name: Start Minikube
+      run: |
+        minikube start --driver=docker --kubernetes-version=v1.32.0
+    - name: Install kubectl
+      run: |
+        curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+        chmod +x kubectl
+        sudo mv kubectl /usr/local/bin/
 
     - name: Deploy to Minikube
       run: |
