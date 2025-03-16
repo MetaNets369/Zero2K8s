@@ -1,0 +1,8 @@
+name: zero2k8s
+channels:
+  - conda-forge
+dependencies:
+  - python=3.9
+  - fastapi=0.104.1
+  - uvicorn=0.24.0
+  - pydantic=2.5.3
