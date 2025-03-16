@@ -40,3 +40,6 @@ jobs:
         kubectl apply -f yaml/cop-deployment.yaml
         kubectl rollout status deployment/zero2k8s-cop
         minikube service zero2k8s-cop-service --url
+
+
+# Updated with Docker Hub token
