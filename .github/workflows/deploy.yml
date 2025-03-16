@@ -48,4 +48,6 @@ jobs:
       run: |
         kubectl apply -f k8s/cop-deployment.yaml
         kubectl rollout status deployment/zero2k8s-cop
-        minikube service zero2k8s-cop-service --url
+        SERVICE_URL=$(minikube service zero2k8s-cop-service --url)
+        curl -f $SERVICE_URL/metrics
+        curl -X POST -H "Content-Type: application/json" -d '{"test": "handshake"}' $SERVICE_URL/mcp/handshake
