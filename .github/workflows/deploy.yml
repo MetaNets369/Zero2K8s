@@ -30,10 +30,11 @@ jobs:
         tags: metanets/zero2k8s-cop:latest
 
     - name: Set up Minikube
-      uses: medyagh/setup-minikube@latest
+      uses: actions/setup-minikube@v1  # Adjust version based on Marketplace listing
       with:
-        minikube-version: v1.35.0
-        kubernetes-version: v1.32.0
+        minikube-version: 'v1.35.0'
+        kubernetes-version: 'v1.32.0'
+        driver: 'docker'
 
     - name: Deploy to Minikube
       run: |
