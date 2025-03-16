@@ -1,0 +1,40 @@
+# Python bytecode files
+__pycache__/
+*.pyc
+
+# Python environments
+.env
+venv/
+env/
+*.egg-info/
+
+# Docker files
+*.log
+docker-compose.override.yml
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Terraform files
+*.tfstate
+*.tfstate.*
+crash.log
+.terraform/
+
+# Kubernetes temporary/generated files
+*.bak
+*.swp
+
+# Ansible temporary/generated files
+*.retry
+
+# VSCode settings
+.vscode/
+
+# JetBrains IDE settings
+.idea/
+
+# Miscellaneous
+*.temp
+*.tmp
