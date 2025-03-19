@@ -1,7 +1,7 @@
 name: CI/CD Pipeline for Zero2K8s
 on:
   push:
-    branches: [ devops-actions, devops-staging, main ]
+    branches: [ BaseStack-Week2 ]
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
