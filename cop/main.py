@@ -1,8 +1,13 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 from typing import Union  # Python 3.9 compatibility fix
+from prometheus_client import Counter, generate_latest, REGISTRY
 
 app = FastAPI(title="Zero2K8s Central Orchestration Platform (COP)", version="1.0")
+
+# Define a Prometheus counter for handshake requests
+handshake_requests = Counter('handshake_requests_total', 'Total number of MCP handshake requests')
 
 # Mock MCP classes for testing
 class MockMCPServer:
@@ -40,10 +45,12 @@ class ToolRequest(BaseModel):
 
 @app.get("/metrics")
 async def metrics():
-    return {"status": "up", "version": "1.0"}
+    # Return Prometheus-formatted metrics
+    return PlainTextResponse(content=generate_latest(REGISTRY), media_type="text/plain; version=0.0.4")
 
 @app.post("/mcp/handshake")
 async def mcp_handshake(data: dict):
+    handshake_requests.inc()  # Increment the counter for each handshake request
     response = mcp_server.handle_request(data)
     if not response:
         raise HTTPException(status_code=400, detail="Invalid MCP handshake")
