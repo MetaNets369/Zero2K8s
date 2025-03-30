@@ -1,7 +1,8 @@
 name: CI/CD Pipeline for Zero2K8s
 on:
   push:
-    branches: [ devops-actions, devops-staging, main ]
+    # Adjusted branches based on previous log/context
+    branches: [ devops-actions, devops-staging, main ] 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
@@ -9,7 +10,7 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    # Cache Docker layers
+    # --- Caching steps remain the same ---
     - name: Cache Docker layers
       uses: actions/cache@v4
       with:
@@ -17,69 +18,88 @@ jobs:
         key: ${{ runner.os }}-docker-${{ github.sha }}
         restore-keys: |
           ${{ runner.os }}-docker-
-
-    # Cache Minikube Base Image and Preload
     - name: Cache Minikube Base Image and Preload
       uses: actions/cache@v4
       with:
         path: ~/.minikube/cache
-        key: ${{ runner.os }}-minikube-${{ github.sha }}
+        key: ${{ runner.os }}-minikube-${{ github.sha }} # Key uses commit SHA for better cache invalidation
         restore-keys: |
           ${{ runner.os }}-minikube-
 
+    # --- Docker steps remain the same ---
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
-
     - name: Log in to Docker Hub
       uses: docker/login-action@v3
       with:
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.DOCKERHUB_TOKEN }}
-
     - name: Build and push Docker image
       uses: docker/build-push-action@v6
       with:
-        context: .
-        file: ./docker/Dockerfile
+        context: . # Build context is project root
+        file: ./docker/Dockerfile # Path to Dockerfile
         push: true
-        tags: metanets/zero2k8s-cop:latest
+        tags: metanets/zero2k8s-cop:latest # Use your image tag
 
+    # --- Kubernetes steps ---
     - name: Install Minikube
       run: |
         curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
         sudo install minikube-linux-amd64 /usr/local/bin/minikube
-
     - name: Start Minikube
       run: |
-        minikube start --driver=docker --kubernetes-version=v1.32.0 --wait=all
-
+        # Using specific version from Week 1 notes
+        minikube start --driver=docker --kubernetes-version=v1.32.0 --wait=all 
     - name: Install kubectl
       run: |
         curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
         chmod +x kubectl
         sudo mv kubectl /usr/local/bin/
 
-    - name: Deploy to Minikube
+    # --- Updated Deployment Step ---
+    - name: Deploy to Minikube 
       run: |
-        kubectl apply -f k8s/cop-deployment.yaml
-        kubectl rollout status deployment/zero2k8s-cop
-
-        SERVICE_URL=$(minikube service zero2k8s-cop-service --url)
-        sleep 10
+        # 1. Ensure namespace exists (Idempotent)
+        echo "Ensuring namespace 'zero2k8s' exists..."
+        kubectl create namespace zero2k8s --dry-run=client -o yaml | kubectl apply -f -
+        
+        # 2. Apply the COP manifest to the correct namespace
+        echo "Applying COP manifest..."
+        kubectl apply -f k8s/cop-deployment.yaml -n zero2k8s 
+        
+        # 3. Wait for rollout
+        echo "Waiting for COP rollout..."
+        kubectl rollout status deployment/zero2k8s-cop -n zero2k8s
+        
+        # 4. Get Service URL (add namespace flag) and test endpoints
+        echo "Getting Service URL and testing endpoints..."
+        # Use --url=true with specific format for better parsing if needed, or rely on default output
+        SERVICE_URL=$(minikube service zero2k8s-cop-service -n zero2k8s --url) 
+        echo "Service URL: $SERVICE_URL"
+        # Add delay to ensure service endpoint is ready
+        sleep 15 
+        echo "Testing /metrics endpoint..."
         curl -f $SERVICE_URL/metrics
-        curl -X POST -H "Content-Type: application/json" -d '{"test": "handshake"}' $SERVICE_URL/mcp/handshake
+        echo "Testing /mcp/handshake endpoint..."
+        curl -f -X POST -H "Content-Type: application/json" -d '{"test": "handshake"}' $SERVICE_URL/mcp/handshake
+    # --- End Updated Deployment Step ---
 
     - name: Debug on failure
       if: failure()
       run: |
+        echo "==== GET ALL IN NAMESPACE ===="
+        kubectl get all -n zero2k8s || true
         echo "==== DESCRIBE DEPLOYMENT ===="
-        kubectl describe deployment zero2k8s-cop || true
+        kubectl describe deployment zero2k8s-cop -n zero2k8s || true
         echo "==== LOGS ===="
-        kubectl logs -l app=zero2k8s-cop --tail=100 || true
+        kubectl logs -l app=zero2k8s-cop -n zero2k8s --tail=100 || true
+        echo "==== GET EVENTS ===="
+        kubectl get events -n zero2k8s --sort-by='.lastTimestamp' || true
 
     - name: Cleanup
       if: always()
       run: |
         echo "Stopping Minikube cluster..."
         minikube stop || true
-        minikube delete || true
+        minikube delete --all --purge || true # Added --all --purge for cleaner cleanup
