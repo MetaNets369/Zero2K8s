@@ -1,0 +1,35 @@
+# templates/cop-servicemonitor.yaml
+# Defines how the Prometheus Operator should configure Prometheus
+# to scrape the zero2k8s-cop-service.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  # Name of the ServiceMonitor resource
+  name: {{ include "zero2k8s-chart.fullname" . }}-cop-sm 
+  # Deploy into the namespace defined in values.yaml
+  namespace: {{ .Values.namespace }} 
+  # Add labels common to the Helm release, useful for selection
+  labels:
+    {{- include "zero2k8s-chart.labels" . | nindent 4 }}
+    # Add specific label if needed for prometheus.prometheusSpec.serviceMonitorSelector
+    # app.kubernetes.io/component: cop-monitor 
+spec:
+  # Select Services in the specified namespaces that match these labels
+  selector:
+    matchLabels:
+      # This MUST match the labels on the zero2k8s-cop-service object
+      app: zero2k8s-cop 
+  # Specify which namespaces the target Service might be in
+  namespaceSelector:
+    matchNames:
+    - {{ .Values.namespace }} # Look only in the release namespace
+  # Define the endpoints on the selected Service(s) to scrape
+  endpoints:
+  - port: http # This MUST match the 'name' of the port in the Service definition
+    # If the Service port wasn't named, use targetPort: {{ .Values.cop.port }}
+    
+    # Optional: Override scrape interval for this target
+    # interval: 15s 
+    
+    # Optional: Specify the path if not '/metrics'
+    # path: /metrics 

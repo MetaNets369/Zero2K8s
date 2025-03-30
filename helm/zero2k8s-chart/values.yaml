@@ -1,0 +1,128 @@
+# Default values for zero2k8s-chart.
+# Declare variables to be passed into your templates.
+
+# --- Global Settings ---
+# Define the target namespace for all resources in this chart
+namespace: zero2k8s
+
+# --- Service Account Configuration (Added Section) ---
+# Default ServiceAccount settings needed by helper templates
+serviceAccount:
+  # Specifies whether a service account should be created by the chart
+  create: false 
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template.
+  # If not set and create is false, default Kubernetes service account is used.
+  name: "" 
+
+# --- COP Application Configuration ---
+cop:
+  replicas: 1
+  image: "metanets/zero2k8s-cop:latest" # Make sure this is your correct image
+  imagePullPolicy: Always # Use Always to ensure latest image is pulled
+  port: 5000 # Internal port the FastAPI app listens on
+  
+  # Define service specific settings
+  service:
+    type: NodePort # Use NodePort for Minikube access (can be overridden for cloud)
+    port: 80 # Port the Kubernetes Service will expose
+    
+  # Define resource requests and limits for the COP container
+  resources:
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+    requests:
+      cpu: "200m"
+      memory: "256Mi"
+
+# --- kube-prometheus-stack Subchart Configuration ---
+# These values override the defaults in the kube-prometheus-stack chart
+# See subchart values for all options: https://github.com/prometheus-community/helm-charts/blob/main/charts/kube-prometheus-stack/values.yaml
+kube-prometheus-stack:
+  
+  # Disable components not needed initially for simplicity
+  alertmanager:
+    enabled: false
+    
+  # Keep Prometheus enabled (default)
+  prometheus:
+    enabled: true
+    prometheusSpec:
+      # Configure Prometheus storage via a PersistentVolumeClaim
+      storageSpec:
+        volumeClaimTemplate:
+          spec:
+            # Use Minikube's default StorageClass ('standard') for dynamic provisioning
+            storageClassName: standard 
+            accessModes: ["ReadWriteOnce"]
+            resources:
+              requests:
+                storage: "1Gi" # Adjust storage size as needed
+      
+      # Discover all ServiceMonitors in the same namespace as Prometheus
+      # This allows our custom ServiceMonitor for COP to be found
+      serviceMonitorSelector: {} 
+      # If Prometheus needs to find ServiceMonitors in other namespaces, 
+      # serviceMonitorNamespaceSelector would be needed here.
+
+      # Discover all PodMonitors in the same namespace (if needed later)
+      podMonitorSelector: {}
+      
+      # Discover all PrometheusRules in the same namespace (if needed later)
+      ruleSelector: {}
+
+  # Keep Grafana enabled
+  grafana:
+    enabled: true
+    
+    # Set default admin password (CHANGE THIS or use secrets for production)
+    adminPassword: "prom-operator" # Default password, highly recommended to change
+
+    # Configure Grafana service type
+    service:
+      type: NodePort # Use NodePort for Minikube access
+      port: 3000 # Standard Grafana port
+      
+    # Configure Grafana persistence
+    persistence:
+      enabled: true
+      type: pvc
+      # Use Minikube's default StorageClass ('standard')
+      storageClassName: standard 
+      accessModes: ["ReadWriteOnce"]
+      size: "1Gi" # Adjust storage size as needed
+
+    # Sidecar for discovering dashboards from ConfigMaps/Secrets (optional)
+    # sidecar:
+    #   dashboards:
+    #     enabled: true
+    #     label: grafana_dashboard
+    #     labelValue: "1"
+    
+    # Configure default datasource (Prometheus)
+    # Usually configured automatically by the chart, but can customize here
+    # additionalDataSources:
+    #   - name: Prometheus
+    #     type: prometheus
+    #     url: http://prometheus-kube-prometheus-prometheus.zero2k8s.svc:9090 # Adjust service name if needed
+    #     access: proxy
+    #     isDefault: true
+
+  # Keep default exporters enabled
+  prometheus-node-exporter:
+    enabled: true
+  kube-state-metrics:
+    enabled: true
+
+# --- Other Chart Configurations (Optional) ---
+# Example: If you still need the simple Nginx deployment from Week 1
+# nginx:
+#   enabled: false # Set to true to deploy
+#   image: nginx:latest
+#   replicas: 1
+#   service:
+#     type: NodePort
+#     port: 80

@@ -1,0 +1,17 @@
+# helm/zero2k8s-chart/Chart.yaml
+apiVersion: v2
+name: zero2k8s-chart 
+description: Helm chart for Zero2K8s stack including COP and kube-prometheus-stack
+type: application 
+# Increment chart version (example)
+version: 0.3.0 
+# Application version this chart installs
+appVersion: "1.1.0" 
+
+dependencies:
+  - name: kube-prometheus-stack
+    # Pinning to a specific version is recommended for stability
+    # Find latest versions on Artifact Hub: https://artifacthub.io/packages/helm/prometheus-community/kube-prometheus-stack
+    version: "59.0.0" # Example version, please check for latest/desired version
+    repository: https://prometheus-community.github.io/helm-charts
+    # alias: monitoring # Optional: use an alias if you prefer different key in values.yaml
