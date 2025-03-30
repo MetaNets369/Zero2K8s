@@ -43,17 +43,17 @@ jobs:
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.DOCKERHUB_TOKEN }}
     
-    # --- Updated Docker Build Step ---
+    # --- Corrected Docker Build Step ---
     - name: Build and push COP Docker image
       uses: docker/build-push-action@v6
       with:
-        # Set build context to the directory containing the Dockerfile
+        # Build context is the directory containing the Dockerfile
         context: ./docker 
-        # Dockerfile path is now relative to the new context
-        file: ./Dockerfile 
+        # Dockerfile path relative to the context directory
+        file: Dockerfile # Corrected: Removed leading ./
         push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }} 
         tags: metanets/zero2k8s-cop:latest 
-    # --- End Updated Docker Build Step ---
+    # --- End Corrected Docker Build Step ---
 
     # --- Kubernetes & Helm steps ---
     - name: Install Minikube
@@ -131,4 +131,4 @@ jobs:
       run: |
         echo "Stopping Minikube cluster..."
         minikube stop || true
-        minikube delete --all --purge || true
+        minikube delete --all --purge || true 
