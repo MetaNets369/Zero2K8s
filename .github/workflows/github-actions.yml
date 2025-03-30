@@ -1,0 +1,141 @@
+name: CI/CD Pipeline for Zero2K8s (Helm)
+on:
+  push:
+    # Trigger on branches used for testing and main
+    branches: [ devops-actions, devops-staging, main ] 
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      # Fetch full history for Helm chart versioning if needed later
+      # fetch-depth: 0 
+
+    # --- Caching steps remain the same ---
+    - name: Cache Docker layers
+      uses: actions/cache@v4
+      with:
+        path: /tmp/.buildx-cache
+        key: ${{ runner.os }}-docker-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-docker-
+    - name: Cache Minikube Base Image and Preload
+      uses: actions/cache@v4
+      with:
+        path: ~/.minikube/cache
+        key: ${{ runner.os }}-minikube-${{ github.sha }} 
+        restore-keys: |
+          ${{ runner.os }}-minikube-
+    # Add Helm cache if needed (optional)
+    # - name: Cache Helm repositories
+    #   uses: actions/cache@v4
+    #   with:
+    #     path: ~/.cache/helm/repository
+    #     key: ${{ runner.os }}-helm-repo
+
+    # --- Docker steps remain the same ---
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+    - name: Build and push COP Docker image
+      uses: docker/build-push-action@v6
+      with:
+        context: . 
+        file: ./docker/Dockerfile 
+        push: true
+        tags: metanets/zero2k8s-cop:latest # Use your image tag
+
+    # --- Kubernetes & Helm steps ---
+    - name: Install Minikube
+      run: |
+        curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
+        sudo install minikube-linux-amd64 /usr/local/bin/minikube
+    - name: Start Minikube
+      run: |
+        minikube start --driver=docker --kubernetes-version=v1.32.0 --wait=all 
+    - name: Install kubectl
+      # Runner likely has kubectl, but install specific/latest if needed
+      run: |
+        curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+        chmod +x kubectl
+        sudo mv kubectl /usr/local/bin/
+    - name: Install Helm
+      # Runner likely has Helm, add install step if specific version needed
+      run: |
+        echo "Checking Helm version..."
+        helm version
+        # Example install if needed:
+        # curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+    # --- Updated Deployment Step using Helm ---
+    - name: Deploy Helm Chart
+      run: |
+        NAMESPACE="zero2k8s"
+        CHART_DIR="./helm/zero2k8s-chart"
+        RELEASE_NAME="zero2k8s-stack"
+        VALUES_FILE="${CHART_DIR}/values.yaml" # Using default values
+
+        # 1. Ensure namespace exists (Idempotent)
+        echo "Ensuring namespace '${NAMESPACE}' exists..."
+        kubectl create namespace "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
+        
+        # 2. Update Helm Dependencies
+        echo "Updating Helm dependencies..."
+        helm dependency update "${CHART_DIR}"
+        
+        # 3. Deploy/Upgrade Helm Chart
+        echo "Deploying/Upgrading Helm release '${RELEASE_NAME}'..."
+        helm upgrade --install "${RELEASE_NAME}" "${CHART_DIR}" \
+          --namespace "${NAMESPACE}" \
+          -f "${VALUES_FILE}" \
+          --wait --timeout 10m # Wait up to 10 mins for resources
+
+        # 4. Basic Verification (Check Pods)
+        echo "Verifying pod status..."
+        kubectl get pods -n "${NAMESPACE}"
+        # Add more specific waits or checks if needed
+        # Example: Wait for Prometheus StatefulSet
+        kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=prometheus -n ${NAMESPACE} --timeout=5m || echo "Prometheus pod wait timed out"
+        # Example: Wait for Grafana Deployment
+        kubectl wait --for=condition=available deployment -l app.kubernetes.io/name=grafana -n ${NAMESPACE} --timeout=5m || echo "Grafana deployment wait timed out"
+        # Example: Wait for COP Deployment
+        kubectl wait --for=condition=available deployment -l app=zero2k8s-cop -n ${NAMESPACE} --timeout=2m || echo "COP deployment wait timed out"
+
+        # 5. Get Service URL and test COP endpoint
+        echo "Getting Service URL and testing COP endpoint..."
+        # Use kubectl port-forward for more reliable testing in CI if NodePort/LB is slow
+        echo "Attempting port-forward..."
+        kubectl port-forward svc/${RELEASE_NAME}-zero2k8s-chart-cop-service ${RANDOM_PORT:-8080}:80 -n ${NAMESPACE} &
+        PF_PID=$!
+        # Allow port-forward to establish
+        sleep 5 
+        SERVICE_URL="http://127.0.0.1:${RANDOM_PORT:-8080}"
+        echo "Testing URL: $SERVICE_URL"
+        curl -f $SERVICE_URL/
+        # Kill port-forward
+        kill $PF_PID
+    # --- End Updated Deployment Step ---
+
+    - name: Debug on failure
+      if: failure()
+      run: |
+        echo "==== GET ALL IN NAMESPACE ===="
+        kubectl get all -n zero2k8s || true
+        echo "==== HELM STATUS ===="
+        helm status zero2k8s-stack -n zero2k8s || true
+        echo "==== DESCRIBE FAILED PODS (if any) ===="
+        kubectl describe pod -n zero2k8s --field-selector=status.phase!=Running,status.phase!=Succeeded || true
+        echo "==== GET EVENTS ===="
+        kubectl get events -n zero2k8s --sort-by='.lastTimestamp' || true
+
+    - name: Cleanup
+      if: always()
+      run: |
+        echo "Stopping Minikube cluster..."
+        minikube stop || true
+        minikube delete --all --purge || true
