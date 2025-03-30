@@ -6,6 +6,13 @@ from prometheus_client import Counter, generate_latest, REGISTRY
 
 app = FastAPI(title="Zero2K8s Central Orchestration Platform (COP)", version="1.0")
 
+# --- Added Root Endpoint ---
+@app.get("/")
+async def root():
+    """Provides a simple welcome message for the root endpoint."""
+    return {"message": "Welcome to Zero2K8s: This is the COP API Endpoint"}
+# --- End Added Root Endpoint ---
+
 # Define a Prometheus counter for handshake requests
 handshake_requests = Counter('handshake_requests_total', 'Total number of MCP handshake requests')
 
@@ -79,4 +86,5 @@ async def get_prompt(prompt_id: str):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=5000)
+    # Ensure host is 0.0.0.0 to be accessible within container
+    uvicorn.run(app, host="0.0.0.0", port=5000) 

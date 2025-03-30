@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: zero2k8s-cop
+  namespace: zero2k8s # Ensure namespace is specified
 spec:
   replicas: 1
   selector:
@@ -11,14 +12,19 @@ spec:
     metadata:
       labels:
         app: zero2k8s-cop
+      # Optional: Add annotations to the Pod template if needed later
+      # annotations:
+      #   prometheus.io/scrape: "true" # If scraping pod directly
+      #   prometheus.io/port: "5000"   # If scraping pod directly
     spec:
       containers:
       - name: zero2k8s-cop
         image: metanets/zero2k8s-cop:latest
         imagePullPolicy: Always
         ports:
-        - containerPort: 5000  # Updated to FastAPI port
+        - containerPort: 5000  # FastAPI port
         resources:
+          # Using requests/limits from your previous version
           requests:
             cpu: "0.2"
             memory: "256Mi"
@@ -30,10 +36,18 @@ apiVersion: v1
 kind: Service
 metadata:
   name: zero2k8s-cop-service
+  namespace: zero2k8s # Ensure namespace is specified
+  # --- Start Added/Corrected Section ---
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "5000" # Port the application listens on (targetPort)
+  # --- End Added/Corrected Section ---
 spec:
   selector:
-    app: zero2k8s-cop
+    app: zero2k8s-cop # Matches Deployment labels
   ports:
-  - port: 80
-    targetPort: 5000  # Match container port
-  type: LoadBalancer
+  - name: http # Naming the port is good practice
+    protocol: TCP
+    port: 80 # Port the service exposes
+    targetPort: 5000 # Port the container listens on
+  type: LoadBalancer # Or NodePort if preferred for local Minikube access without LB addon
