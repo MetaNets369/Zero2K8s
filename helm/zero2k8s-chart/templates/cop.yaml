@@ -1,0 +1,86 @@
+# templates/cop.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  # Use the standard Helm fullname helper
+  name: {{ include "zero2k8s-chart.fullname" . }}-cop 
+  namespace: {{ .Values.namespace }}
+  labels:
+    # Include standard Helm labels
+    {{- include "zero2k8s-chart.labels" . | nindent 4 }} 
+    # Add specific app label for service selector
+    app: zero2k8s-cop 
+spec:
+  # Use replicas value from values.yaml
+  replicas: {{ .Values.cop.replicas }} 
+  selector:
+    matchLabels:
+      # Selector must match labels below AND service selector
+      {{- include "zero2k8s-chart.selectorLabels" . | nindent 6 }}
+      app: zero2k8s-cop
+  template:
+    metadata:
+      labels:
+        # Labels applied to the Pods
+        {{- include "zero2k8s-chart.selectorLabels" . | nindent 8 }}
+        app: zero2k8s-cop
+      # Add annotations here if needed for the Pod itself
+      # annotations:
+      #   prometheus.io/scrape: "true" # Not needed if scraping Service via ServiceMonitor
+      #   prometheus.io/port: {{ .Values.cop.port | quote }}
+    spec:
+      # serviceAccountName: {{ include "zero2k8s-chart.serviceAccountName" . }} # Use if specific SA is needed
+      containers:
+      - name: zero2k8s-cop # Container name
+        image: "{{ .Values.cop.image }}" # Image from values.yaml
+        imagePullPolicy: {{ .Values.cop.imagePullPolicy }} # Pull policy from values.yaml
+        ports:
+        - name: http # Name the container port
+          containerPort: {{ .Values.cop.port }} # Port from values.yaml
+          protocol: TCP
+        # Add liveness/readiness probes if desired
+        # livenessProbe:
+        #   httpGet:
+        #     path: / # Check the root path added earlier
+        #     port: http
+        # readinessProbe:
+        #   httpGet:
+        #     path: /
+        #     port: http
+        resources:
+          # Resources from values.yaml
+          limits:
+            cpu: {{ .Values.cop.resources.limits.cpu }}
+            memory: {{ .Values.cop.resources.limits.memory }}
+          requests:
+            cpu: {{ .Values.cop.resources.requests.cpu }}
+            memory: {{ .Values.cop.resources.requests.memory }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  # Use standard Helm fullname helper
+  name: {{ include "zero2k8s-chart.fullname" . }}-cop-service 
+  namespace: {{ .Values.namespace }}
+  labels:
+    # Include standard Helm labels
+    {{- include "zero2k8s-chart.labels" . | nindent 4 }}
+    # Add specific app label MUST MATCH selector below AND Deployment's Pod labels
+    app: zero2k8s-cop 
+  # Add annotations needed for ServiceMonitor discovery
+  annotations:
+    prometheus.io/scrape: "true"
+    # Port annotation should match the container's listening port (targetPort)
+    prometheus.io/port: {{ .Values.cop.port | quote }} 
+spec:
+  type: {{ .Values.cop.service.type }} # Service type from values.yaml
+  ports:
+    - port: {{ .Values.cop.service.port }} # Service port from values.yaml
+      targetPort: http # Target the *named* container port
+      protocol: TCP
+      name: http # Name the service port
+      # nodePort: 30001 # Specify NodePort if type is NodePort and you need a fixed one
+  selector:
+    # Selector must match labels on the Pods created by the Deployment
+    {{- include "zero2k8s-chart.selectorLabels" . | nindent 4 }}
+    app: zero2k8s-cop 
