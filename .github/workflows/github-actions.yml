@@ -50,7 +50,7 @@ jobs:
         # Build context is the directory containing the Dockerfile
         context: ./docker 
         # Dockerfile path relative to the context directory
-        file: Dockerfile # Corrected: Removed leading ./
+        file: docker/Dockerfile # Removed the leading ./
         push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }} 
         tags: metanets/zero2k8s-cop:latest 
     # --- End Corrected Docker Build Step ---
