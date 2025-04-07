@@ -142,6 +142,3 @@ This section details how to back up the running stack's persistent data (Prometh
         * **Crucially:** Verify the Grafana dashboard shows **historical data** from *before* the backup timestamp, confirming successful data restore.
 
 ### Week 3 onwards... (To Do)
-
-* Plan outlined in `10 Week Program V3 Markdown`.
-
