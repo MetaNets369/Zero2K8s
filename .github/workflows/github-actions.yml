@@ -2,7 +2,7 @@ name: CI/CD Pipeline for Zero2K8s (Helm)
 on:
   # Trigger on pushes to the main branch (e.g., after a PR merge)
   push:
-    branches: [ main ] 
+    branches: [ main, devops-staging ] 
   # Trigger on Pull Requests targeting main or devops-staging
   pull_request:
     branches: [ main, devops-staging ] 
