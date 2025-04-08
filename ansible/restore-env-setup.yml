@@ -1,0 +1,413 @@
+# ansible/restore-env-setup.yml
+# Playbook to prepare recovery env, download backups, deploy stack, and inject data.
+# Uses kubectl commands for helper pod interaction and force deletes pods.
+# Run this playbook on your local machine (the Ansible control node).
+- name: Setup Zero2K8s Recovery Environment, Download Backups, Deploy Stack, and Restore Data
+  hosts: localhost # Target the machine running Ansible
+  connection: local # Use local connection
+  become: no # Most tasks shouldn't require sudo
+
+  vars:
+    # --- Environment Setup Vars ---
+    recovery_base_dir: "{{ lookup('env', 'HOME') }}/Zero2K8s-Recovered"
+    conda_env_name: "Zero2K8s-Recovered"
+    project_dir_name: "Zero2K8s"
+    project_path: "{{ recovery_base_dir }}/{{ project_dir_name }}"
+    conda_env_file: "{{ project_path }}/environment.yml"
+    git_repo_url: "https://github.com/MetaNets369/Zero2K8s.git" # Replace if needed
+    git_branch: "feature/week2-backup-restore"
+    required_commands:
+      - git
+      - conda
+      - docker
+      - minikube
+      - kubectl
+      - helm
+      - rclone
+      - tar
+    # --- Backup/Restore Vars ---
+    RCLONE_REMOTE: "gdrive" # Your configured rclone remote name
+    RCLONE_PATH: "Zero2K8s-Backups" # Folder on remote drive
+    backup_timestamp: "20250406_201439" # Timestamp of the backup to restore
+    prometheus_archive: "prometheus-data_{{ backup_timestamp }}.tar.gz"
+    grafana_archive: "grafana-data_{{ backup_timestamp }}.tar.gz"
+    restore_temp_dir: "{{ recovery_base_dir }}/restore_temp"
+    # Corrected Prometheus PVC name based on StatefulSet convention
+    prometheus_pvc_name: "prometheus-zero2k8s-stack-kube-promet-prometheus-db-prometheus-zero2k8s-stack-kube-promet-prometheus-0"
+    grafana_pvc_name: "zero2k8s-stack-grafana" # Grafana uses a simple Deployment, so name is direct
+    k8s_namespace: "zero2k8s"
+    # --- Minikube Vars ---
+    minikube_profile: "minikube" # Use default profile name
+    minikube_driver: "docker"
+    minikube_k8s_version: "v1.32.0"
+    minikube_cpus: "4"
+    minikube_memory: "16g" # Ensure this matches your system capability
+    # --- Helper Pod Definitions ---
+    prometheus_helper_pod_def: |
+      apiVersion: v1
+      kind: Pod
+      metadata:
+        name: pvc-restore-helper-prom
+        namespace: {{ k8s_namespace }}
+      spec:
+        containers:
+        - name: helper
+          image: busybox:latest
+          command: ["/bin/sh", "-c", "sleep 3600"]
+          volumeMounts:
+          - mountPath: /prometheus-data
+            name: prom-storage
+        volumes:
+        - name: prom-storage
+          persistentVolumeClaim:
+            claimName: {{ prometheus_pvc_name }}
+    grafana_helper_pod_def: |
+      apiVersion: v1
+      kind: Pod
+      metadata:
+        name: pvc-restore-helper-graf
+        namespace: {{ k8s_namespace }}
+      spec:
+        containers:
+        - name: helper
+          image: busybox:latest
+          command: ["/bin/sh", "-c", "sleep 3600"]
+          volumeMounts:
+          - mountPath: /grafana-data
+            name: graf-storage
+        volumes:
+        - name: graf-storage
+          persistentVolumeClaim:
+            claimName: {{ grafana_pvc_name }}
+
+  tasks:
+    # --- DIAGNOSTIC TASK ---
+    - name: Display Python interpreter being used by Ansible for this playbook
+      ansible.builtin.debug:
+        var: ansible_python_interpreter
+      tags:
+        - always
+
+    # --- Prepare Restore Target ---
+    - name: Stop existing Minikube instance (profile '{{ minikube_profile }}') if running
+      ansible.builtin.command:
+        cmd: "minikube stop -p {{ minikube_profile }}"
+      register: minikube_stop_result
+      failed_when: false # Don't fail if it wasn't running
+      changed_when: "'Stopped' in minikube_stop_result.stdout"
+      tags:
+        - restore
+        - minikube
+        - prepare
+
+    - name: Delete existing Minikube instance (profile '{{ minikube_profile }}') to ensure clean state
+      ansible.builtin.command:
+        cmd: "minikube delete -p {{ minikube_profile }}"
+      register: minikube_delete_result
+      failed_when: false # Don't fail if it didn't exist
+      changed_when: "'Deleting' in minikube_delete_result.stdout"
+      tags:
+        - restore
+        - minikube
+        - prepare
+
+    # --- Environment Setup ---
+    - name: Ensure recovery base directory exists
+      ansible.builtin.file:
+        path: "{{ recovery_base_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Ensure temporary restore directory exists
+      ansible.builtin.file:
+        path: "{{ restore_temp_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Clone Zero2K8s repository if not present or update if needed
+      ansible.builtin.git:
+        repo: "{{ git_repo_url }}"
+        dest: "{{ project_path }}"
+        version: "{{ git_branch }}"
+        force: yes
+      register: git_clone_result
+
+    - name: Check if Git clone was successful
+      ansible.builtin.fail:
+        msg: "Failed to clone Git repository '{{ git_repo_url }}' (branch '{{ git_branch }}') into '{{ project_path }}'."
+      when: git_clone_result.failed
+
+    - name: Check for required command-line tools
+      ansible.builtin.command: "which {{ item }}"
+      register: command_check_result
+      changed_when: false
+      failed_when: command_check_result.rc != 0
+      loop: "{{ required_commands }}"
+      loop_control:
+        loop_var: item
+      vars:
+        ansible_warning: false
+      tags:
+        - checks
+
+    - name: Ensure environment.yml file exists after clone
+      ansible.builtin.stat:
+        path: "{{ conda_env_file }}"
+      register: env_file_stat
+      failed_when: not env_file_stat.stat.exists
+      tags:
+        - conda
+
+    - name: Check if recovery Conda environment already exists
+      ansible.builtin.command: "conda env list"
+      register: conda_env_list
+      changed_when: false
+      tags:
+        - conda
+
+    - name: Create recovery Conda environment from environment.yml if it doesn't exist
+      ansible.builtin.shell:
+        cmd: "conda env create -f {{ conda_env_file }} -n {{ conda_env_name }}"
+        executable: /bin/bash
+      when: conda_env_name not in conda_env_list.stdout
+      register: conda_create_result
+      failed_when: conda_create_result.rc != 0
+      tags:
+        - conda
+
+    # --- Download Backups ---
+    - name: Download Prometheus backup archive from rclone remote
+      ansible.builtin.command:
+        cmd: "rclone copy --progress {{ RCLONE_REMOTE }}:{{ RCLONE_PATH }}/{{ prometheus_archive }} {{ restore_temp_dir }}/"
+      register: rclone_prom_result
+      failed_when: rclone_prom_result.rc != 0
+      changed_when: "'Transferred' in rclone_prom_result.stderr or 'Deleted' in rclone_prom_result.stderr"
+      tags:
+        - restore
+        - rclone
+
+    - name: Download Grafana backup archive from rclone remote
+      ansible.builtin.command:
+        cmd: "rclone copy --progress {{ RCLONE_REMOTE }}:{{ RCLONE_PATH }}/{{ grafana_archive }} {{ restore_temp_dir }}/"
+      register: rclone_graf_result
+      failed_when: rclone_graf_result.rc != 0
+      changed_when: "'Transferred' in rclone_graf_result.stderr or 'Deleted' in rclone_graf_result.stderr"
+      tags:
+        - restore
+        - rclone
+
+    # --- Start Minikube and Deploy Helm Stack ---
+    - name: Start Minikube for recovery
+      ansible.builtin.command:
+        # Removed --force as we explicitly delete first
+        cmd: "minikube start -p {{ minikube_profile }} --driver={{ minikube_driver }} --kubernetes-version={{ minikube_k8s_version }} --cpus={{ minikube_cpus }} --memory={{ minikube_memory }} --wait=all"
+      register: minikube_start_result
+      failed_when: minikube_start_result.rc != 0
+      changed_when: "'Done!' in minikube_start_result.stdout"
+      tags:
+        - restore
+        - minikube
+
+    - name: Deploy Helm stack in recovery environment
+      ansible.builtin.shell:
+        cmd: "source $(conda info --base)/etc/profile.d/conda.sh && conda activate {{ conda_env_name }} && ./deploy-helm-stack.sh"
+        chdir: "{{ project_path }}"
+        executable: /bin/bash
+      register: helm_deploy_result
+      failed_when: helm_deploy_result.rc != 0
+      changed_when: "'STATUS: deployed' in helm_deploy_result.stdout or 'Release .* has been upgraded' in helm_deploy_result.stdout"
+      tags:
+        - restore
+        - helm
+
+    # --- Inject Data into PVCs ---
+    - name: Scale down Prometheus StatefulSet
+      ansible.builtin.command:
+        cmd: "kubectl scale statefulset prometheus-zero2k8s-stack-kube-promet-prometheus -n {{ k8s_namespace }} --replicas=0"
+      register: scale_down_prom
+      failed_when: scale_down_prom.rc != 0
+      changed_when: "'scaled' in scale_down_prom.stdout"
+      tags:
+        - restore
+        - inject
+
+    - name: Scale down Grafana Deployment
+      ansible.builtin.command:
+        cmd: "kubectl scale deployment zero2k8s-stack-grafana -n {{ k8s_namespace }} --replicas=0"
+      register: scale_down_graf
+      failed_when: scale_down_graf.rc != 0
+      changed_when: "'scaled' in scale_down_graf.stdout"
+      tags:
+        - restore
+        - inject
+
+    - name: Force delete Prometheus pod (if it exists)
+      ansible.builtin.command:
+        cmd: >
+          kubectl delete pod -n {{ k8s_namespace }}
+          -l app.kubernetes.io/name=prometheus,operator.prometheus.io/name=zero2k8s-stack-kube-promet-prometheus
+          --force --grace-period=0 --ignore-not-found=true
+      register: force_delete_prom
+      failed_when: force_delete_prom.rc != 0 and 'NotFound' not in force_delete_prom.stderr
+      changed_when: "'deleted' in force_delete_prom.stdout"
+      tags:
+        - restore
+        - inject
+
+    - name: Force delete Grafana pod (if it exists)
+      ansible.builtin.command:
+        cmd: >
+          kubectl delete pod -n {{ k8s_namespace }}
+          -l app.kubernetes.io/name=grafana,app.kubernetes.io/instance=zero2k8s-stack
+          --force --grace-period=0 --ignore-not-found=true
+      register: force_delete_graf
+      failed_when: force_delete_graf.rc != 0 and 'NotFound' not in force_delete_graf.stderr
+      changed_when: "'deleted' in force_delete_graf.stdout"
+      tags:
+        - restore
+        - inject
+
+    - name: Extract Prometheus backup archive
+      ansible.builtin.unarchive:
+        src: "{{ restore_temp_dir }}/{{ prometheus_archive }}"
+        dest: "{{ restore_temp_dir }}/" # Extracts contents directly into restore_temp_dir
+      tags:
+        - restore
+        - inject
+
+    - name: Extract Grafana backup archive
+      ansible.builtin.unarchive:
+        src: "{{ restore_temp_dir }}/{{ grafana_archive }}"
+        dest: "{{ restore_temp_dir }}/" # Extracts contents directly into restore_temp_dir
+      tags:
+        - restore
+        - inject
+
+    - name: Create Prometheus restore helper pod
+      ansible.builtin.command:
+        cmd: "kubectl apply -n {{ k8s_namespace }} -f -"
+        stdin: "{{ prometheus_helper_pod_def }}"
+      register: create_prom_helper
+      failed_when: create_prom_helper.rc != 0
+      changed_when: "'created' in create_prom_helper.stdout or 'configured' in create_prom_helper.stdout"
+      tags:
+        - restore
+        - inject
+
+    - name: Create Grafana restore helper pod
+      ansible.builtin.command:
+        cmd: "kubectl apply -n {{ k8s_namespace }} -f -"
+        stdin: "{{ grafana_helper_pod_def }}"
+      register: create_graf_helper
+      failed_when: create_graf_helper.rc != 0
+      changed_when: "'created' in create_graf_helper.stdout or 'configured' in create_graf_helper.stdout"
+      tags:
+        - restore
+        - inject
+
+    - name: Wait for Prometheus helper pod to be running
+      ansible.builtin.command:
+        cmd: "kubectl get pod pvc-restore-helper-prom -n {{ k8s_namespace }} -o jsonpath='{.status.phase}'"
+      register: prom_helper_phase
+      until: "prom_helper_phase.stdout == 'Running'"
+      retries: 12
+      delay: 5
+      tags:
+        - restore
+        - inject
+
+    - name: Wait for Grafana helper pod to be running
+      ansible.builtin.command:
+        cmd: "kubectl get pod pvc-restore-helper-graf -n {{ k8s_namespace }} -o jsonpath='{.status.phase}'"
+      register: graf_helper_phase
+      until: "graf_helper_phase.stdout == 'Running'"
+      retries: 12
+      delay: 5
+      tags:
+        - restore
+        - inject
+
+    - name: Copy Prometheus data to PVC via helper pod
+      ansible.builtin.command:
+        # Corrected Source Path: Copy contents of restore_temp_dir
+        cmd: >
+          kubectl cp {{ restore_temp_dir }}/.
+          pvc-restore-helper-prom:/prometheus-data/
+          -n {{ k8s_namespace }}
+      register: cp_prom_result
+      failed_when: cp_prom_result.rc != 0
+      changed_when: true
+      tags:
+        - restore
+        - inject
+
+    - name: Copy Grafana data to PVC via helper pod
+      ansible.builtin.command:
+        # Corrected Source Path: Copy contents of restore_temp_dir
+        # This assumes grafana.db and other files are directly in restore_temp_dir after extraction
+        cmd: >
+          kubectl cp {{ restore_temp_dir }}/.
+          pvc-restore-helper-graf:/grafana-data/
+          -n {{ k8s_namespace }}
+      register: cp_graf_result
+      failed_when: cp_graf_result.rc != 0
+      changed_when: true
+      tags:
+        - restore
+        - inject
+
+    - name: Delete Prometheus restore helper pod
+      ansible.builtin.command:
+        cmd: "kubectl delete pod pvc-restore-helper-prom -n {{ k8s_namespace }} --wait=true"
+      register: delete_prom_helper
+      failed_when: delete_prom_helper.rc != 0
+      changed_when: "'deleted' in delete_prom_helper.stdout"
+      tags:
+        - restore
+        - inject
+
+    - name: Delete Grafana restore helper pod
+      ansible.builtin.command:
+        cmd: "kubectl delete pod pvc-restore-helper-graf -n {{ k8s_namespace }} --wait=true"
+      register: delete_graf_helper
+      failed_when: delete_graf_helper.rc != 0
+      changed_when: "'deleted' in delete_graf_helper.stdout"
+      tags:
+        - restore
+        - inject
+
+    - name: Scale up Prometheus StatefulSet
+      ansible.builtin.command:
+        cmd: "kubectl scale statefulset prometheus-zero2k8s-stack-kube-promet-prometheus -n {{ k8s_namespace }} --replicas=1"
+      register: scale_up_prom
+      failed_when: scale_up_prom.rc != 0
+      changed_when: "'scaled' in scale_up_prom.stdout"
+      tags:
+        - restore
+        - inject
+
+    - name: Scale up Grafana Deployment
+      ansible.builtin.command:
+        cmd: "kubectl scale deployment zero2k8s-stack-grafana -n {{ k8s_namespace }} --replicas=1"
+      register: scale_up_graf
+      failed_when: scale_up_graf.rc != 0
+      changed_when: "'scaled' in scale_up_graf.stdout"
+      tags:
+        - restore
+        - inject
+    # --- End Inject Data into PVCs ---
+
+    - name: Display final message
+      ansible.builtin.debug:
+        msg: |
+          Zero2K8s recovery environment setup, backup download, Minikube start, Helm deployment, and data injection tasks completed.
+          Base Directory: {{ recovery_base_dir }}
+          Git Repo Cloned/Updated: {{ project_path }} (Branch: {{ git_branch }})
+          Conda Environment: {{ conda_env_name }} (Created/Exists)
+          Required tools checked.
+          Backup archives downloaded to: {{ restore_temp_dir }} and extracted.
+          Minikube started.
+          Helm stack deployed.
+          Data injected into PVCs.
+          Prometheus and Grafana scaled back up.
+          Next step is manual verification of Prometheus targets and Grafana dashboard.
